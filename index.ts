@@ -11,7 +11,14 @@ import type {
 import type {
 	AwsCredentialIdentity,
 } from "@smithy/types/dist-types/identity/awsCredentialIdentity";
-import type { AppenderFunction, Layout, LayoutFunction, LayoutsParam, Levels, LoggingEvent } from "log4js";
+import type {
+	AppenderFunction,
+	Layout,
+	LayoutFunction,
+	LayoutsParam,
+	Levels,
+	LoggingEvent,
+} from "log4js";
 
 export interface Config
 	extends
