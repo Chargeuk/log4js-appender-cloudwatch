@@ -24,7 +24,7 @@ export interface Config
 	extends
 		CreateLogStreamRequest,
 		Pick<RegionInputConfig, "region">,
-		Pick<AwsCredentialIdentity, "accessKeyId" | "secretAccessKey" | "sessionToken">
+		Partial<Pick<AwsCredentialIdentity, "accessKeyId" | "secretAccessKey" | "sessionToken">>
 {
 	/**
 	 * defaults to http://npm.im/log4js-layout-json
@@ -61,6 +61,8 @@ class LogBuffer {
 	private _timer: NodeJS.Timeout | null;
 	private _logs: Array<InputLogEvent>;
 
+	public isReady = false;
+
 	constructor(
 		private config: Config,
 		private _onReleaseCallback: (logs: Array<InputLogEvent>) => void,
@@ -95,6 +97,10 @@ class LogBuffer {
 			return;
 		}
 
+		this.createTimer();
+	}
+
+	private createTimer() {
 		if (this._timer === null) {
 			this._timer = globalThis.setTimeout(() => {
 				this.release();
@@ -107,12 +113,22 @@ class LogBuffer {
 	 * Releases the logs and clears the timer.
 	 */
 	public release(): void {
-		if (this._timer) {
-			globalThis.clearTimeout(this._timer);
-			this._timer = null;
+		try {
+			if (this._timer) {
+				globalThis.clearTimeout(this._timer);
+				this._timer = null;
+			}
+			if (this.isReady) {
+				this._onReleaseCallback([...this._logs]);
+				this._logs = [];
+			} else if (this._logs.length) {
+				// we are not ready, so create a new timer
+				this.createTimer();
+			}
 		}
-		this._onReleaseCallback([...this._logs]);
-		this._logs = [];
+		catch (error) {
+			console.error("Failed to release logs", error);
+		}
 	}
 }
 
@@ -124,13 +140,36 @@ export function cloudwatch(
 	config: Config,
 	layout: LayoutFunction,
 ): AppenderFunction {
-	const cloudwatch = new CloudWatchLogs({
+	const useCredentials = config.accessKeyId || config.secretAccessKey || config.sessionToken;
+	const cloudWatchOptions = {
 		region: config.region,
-		credentials: {
-			accessKeyId: config.accessKeyId,
-			secretAccessKey: config.secretAccessKey,
+		...(useCredentials && {credentials: {
+			accessKeyId: config.accessKeyId || '',
+			secretAccessKey: config.secretAccessKey || '',
 			sessionToken: config.sessionToken,
-		},
+		}}),
+	};
+	const cloudwatch = new CloudWatchLogs(cloudWatchOptions);
+
+	
+	/**
+	 * TODO: integrate limitation to LogBuffer
+	 *
+	 * constraints:
+	 * - The maximum batch size is 1,048,576 bytes. This size is calculated as the sum of all event messages in UTF-8, plus 26 bytes for each log event.
+	 * - None of the log events in the batch can be more than 2 hours in the future.
+	 * - None of the log events in the batch can be more than 14 days in the past. Also, none of the log events can be from earlier than the retention period of the log group.
+	 * - The log events in the batch must be in chronological order by their timestamp. The timestamp is the time that the event occurred, expressed as the number of milliseconds after Jan 1, 1970 00:00:00 UTC. (In Amazon Web Services Tools for PowerShell and the Amazon Web Services SDK for .NET, the timestamp is specified in .NET format: yyyy-mm-ddThh:mm:ss. For example, 2017-09-15T13:45:30.)
+	 * - Each log event can be no larger than 256 KB.
+	 * - A batch of log events in a single request cannot span more than 24 hours. Otherwise, the operation fails.
+	 * - The maximum number of log events in a batch is 10,000.
+	 */
+	const buffer = new LogBuffer(config, (logs): void => {
+		cloudwatch.putLogEvents({
+			logEvents: logs,
+			logGroupName: config.logGroupName,
+			logStreamName: config.logStreamName,
+		});
 	});
 
 	if (config.createResources) {
@@ -140,15 +179,17 @@ export function cloudwatch(
 			if (error.name === "ResourceAlreadyExistsException") {
 				// TODO: continue or exit
 			}
-		});
-
-		cloudwatch.createLogStream({
-			logGroupName: config.logGroupName,
-			logStreamName: config.logStreamName,
-		}).catch((error) => {
-			if (error.name === "ResourceAlreadyExistsException") {
-				// TODO: continue or exit
-			}
+		}).finally(() => {
+			cloudwatch.createLogStream({
+				logGroupName: config.logGroupName,
+				logStreamName: config.logStreamName,
+			}).catch((error) => {
+				if (error.name === "ResourceAlreadyExistsException") {
+					// TODO: continue or exit
+				}
+			}).finally(() => {
+				buffer.isReady = true;
+			});
 		});
 	} else {
 		cloudwatch.describeLogGroups({
@@ -172,28 +213,10 @@ export function cloudwatch(
 					throw new ConfigError("Stream name doesn't exists");
 				}
 			}
+		}).finally(() => {
+			buffer.isReady = true;
 		});
 	}
-
-	/**
-	 * TODO: integrate limitation to LogBuffer
-	 *
-	 * constraints:
-	 * - The maximum batch size is 1,048,576 bytes. This size is calculated as the sum of all event messages in UTF-8, plus 26 bytes for each log event.
-	 * - None of the log events in the batch can be more than 2 hours in the future.
-	 * - None of the log events in the batch can be more than 14 days in the past. Also, none of the log events can be from earlier than the retention period of the log group.
-	 * - The log events in the batch must be in chronological order by their timestamp. The timestamp is the time that the event occurred, expressed as the number of milliseconds after Jan 1, 1970 00:00:00 UTC. (In Amazon Web Services Tools for PowerShell and the Amazon Web Services SDK for .NET, the timestamp is specified in .NET format: yyyy-mm-ddThh:mm:ss. For example, 2017-09-15T13:45:30.)
-	 * - Each log event can be no larger than 256 KB.
-	 * - A batch of log events in a single request cannot span more than 24 hours. Otherwise, the operation fails.
-	 * - The maximum number of log events in a batch is 10,000.
-	 */
-	const buffer = new LogBuffer(config, (logs): void => {
-		cloudwatch.putLogEvents({
-			logEvents: logs,
-			logGroupName: config.logGroupName,
-			logStreamName: config.logStreamName,
-		});
-	});
 
 	return function appender(loggingEvent: LoggingEvent): void {
 		const msg = layout(loggingEvent);
