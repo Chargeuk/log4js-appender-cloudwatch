@@ -1,5 +1,7 @@
 # log4js appender - AWS CloudWatch
 
+Note that this project is a fork of the below description. It has been updated to resolve importing into older projects. Everything below this line is taken from the original forked project.
+
 This module provides a custom appender for [log4js][log4js_github] that
 sends logs to AWS [CloudWatch][aws_cloudwatch] using the AWS [v3 SDK][cloudwatch_sdk].
 

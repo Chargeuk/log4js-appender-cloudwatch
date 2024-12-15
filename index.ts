@@ -11,7 +11,7 @@ import type {
 import type {
 	AwsCredentialIdentity,
 } from "@smithy/types/dist-types/identity/awsCredentialIdentity";
-import type log4js from "log4js";
+import type { AppenderFunction, Layout, LayoutFunction, LayoutsParam, Levels, LoggingEvent } from "log4js";
 
 export interface Config
 	extends
@@ -22,7 +22,7 @@ export interface Config
 	/**
 	 * defaults to http://npm.im/log4js-layout-json
 	 */
-	layout?: log4js.Layout;
+	layout?: Layout;
 	/**
 	 * Maximum number of log events to include in a single batch when sending.
 	 * Once the batch size is reached, it will be sent to CloudWatch.
@@ -115,8 +115,8 @@ class LogBuffer {
  */
 export function cloudwatch(
 	config: Config,
-	layout: log4js.LayoutFunction,
-): log4js.AppenderFunction {
+	layout: LayoutFunction,
+): AppenderFunction {
 	const cloudwatch = new CloudWatchLogs({
 		region: config.region,
 		credentials: {
@@ -188,7 +188,7 @@ export function cloudwatch(
 		});
 	});
 
-	return function appender(loggingEvent: log4js.LoggingEvent): void {
+	return function appender(loggingEvent: LoggingEvent): void {
 		const msg = layout(loggingEvent);
 		const time = loggingEvent.startTime.getTime();
 
@@ -206,11 +206,11 @@ export class ConfigError extends Error {
 
 export function configure(
 	config: Config,
-	layouts: log4js.LayoutsParam,
-	_findAppender: () => log4js.AppenderFunction,
-	_levels: log4js.Levels,
-): log4js.AppenderFunction {
-	let layout: log4js.LayoutFunction | undefined;
+	layouts: LayoutsParam,
+	_findAppender: () => AppenderFunction,
+	_levels: Levels,
+): AppenderFunction {
+	let layout: LayoutFunction | undefined;
 
 	if (config.layout) {
 		// @ts-ignore: bad typings "config: PatternToken"
