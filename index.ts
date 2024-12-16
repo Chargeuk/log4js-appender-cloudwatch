@@ -47,6 +47,9 @@ export interface Config
 	 * - logs:CreateLogStream
 	 */
 	createResources?: boolean;
+
+
+	endpoint?: string;
 }
 
 declare module "log4js" {
@@ -143,6 +146,7 @@ export function cloudwatch(
 	const useCredentials = config.accessKeyId || config.secretAccessKey || config.sessionToken;
 	const cloudWatchOptions = {
 		region: config.region,
+		...(config.endpoint && {endpoint: config.endpoint}),
 		...(useCredentials && {credentials: {
 			accessKeyId: config.accessKeyId || '',
 			secretAccessKey: config.secretAccessKey || '',
